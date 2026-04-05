@@ -1,0 +1,11 @@
+{
+    "watchPaths": [
+        "C:\\Recordings",
+        "D:\\CameraBackup"
+    ],
+    "repoPath": "C:\\ForensicRepo",
+    "enableOpenTimestamps": true,
+    "enablePublicAnchor": true,
+    "logLevel": "INFO",
+    "verifyIntervalSeconds": 300
+}
