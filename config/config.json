@@ -1,11 +1,22 @@
 {
     "watchPaths": [
-        "C:\\Recordings",
-        "D:\\CameraBackup"
+        "E:\\test folerd"
     ],
-    "repoPath": "C:\\ForensicRepo",
+    "installPath": "E:\\ForensicSystem",
+    "repoPath": "E:\\dataHashRepo",
+    "gpgKeyId": "E9D24CA626E62ED2",
     "enableOpenTimestamps": true,
     "enablePublicAnchor": true,
     "logLevel": "INFO",
-    "verifyIntervalSeconds": 300
+    "verifyIntervalSeconds": 300,
+    "excludePatterns": [
+        "*.tmp",
+        "~$*",
+        "*.part",
+        "*.crdownload",
+        "*.~*",
+        "desktop.ini",
+        "thumbs.db",
+        "Thumbs.db"
+    ]
 }

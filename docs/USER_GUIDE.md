@@ -37,9 +37,10 @@ cd installer
 
 This will:
 
-- Copy scripts to `C:\ForensicSystem\`
+- Read `installPath` from `config/config.json`
+- Copy scripts to `installPath` (e.g. `E:\ForensicSystem\`)
 - Create `data\` and `logs\` directories
-- Initialize a Git repo at the configured `repoPath`
+- Initialize a Git evidence repo at the configured `repoPath`
 - Register a scheduled task (`ForensicWatcher`) that runs the watcher at system startup
 
 ### 3.2 Manual / portable install
@@ -61,27 +62,40 @@ Edit `config/config.json` before running:
 ```json
 {
   "watchPaths": [
-    "C:\\Recordings",
+    "E:\\Recordings",
     "D:\\CameraBackup"
   ],
-  "repoPath": "C:\\ForensicRepo",
+  "installPath": "E:\\ForensicSystem",
+  "repoPath": "E:\\ForensicRepo",
+  "gpgKeyId": "",
   "enableOpenTimestamps": true,
   "enablePublicAnchor": false,
   "logLevel": "INFO",
-  "verifyIntervalSeconds": 300
+  "verifyIntervalSeconds": 300,
+  "excludePatterns": [
+    "*.tmp",
+    "~$*",
+    "*.part",
+    "*.crdownload",
+    "desktop.ini",
+    "thumbs.db"
+  ]
 }
 ```
 
 ### Configuration Options
 
-| Key                     | Type     | Description                                                      |
-| ----------------------- | -------- | ---------------------------------------------------------------- |
-| `watchPaths`            | array    | Folders to monitor. Must be non-empty. Warns if path not found. |
-| `repoPath`              | string   | Path to the Git repo where chain log is committed. Optional.    |
-| `enableOpenTimestamps`  | boolean  | Stamp each chain hash to the Bitcoin blockchain via OTS.        |
-| `enablePublicAnchor`    | boolean  | Publish anchor to a public location (future feature).           |
-| `logLevel`              | string   | Logging verbosity: `INFO`, `WARNING`, `ERROR`.                  |
-| `verifyIntervalSeconds` | integer  | How often (seconds) to run a full directory scan. Min 1.        |
+| Key                     | Type    | Description                                                             |
+| ----------------------- | ------- | ----------------------------------------------------------------------- |
+| `watchPaths`            | array   | Folders to monitor. Must be non-empty. Warns if path not found.         |
+| `installPath`           | string  | Where the installer copies files (e.g. `E:\ForensicSystem`). Required.  |
+| `repoPath`              | string  | Path to the Git evidence repo. Optional; disables Git if omitted.       |
+| `gpgKeyId`              | string  | GPG key ID for signed commits. Leave `""` to use GPG default key.       |
+| `enableOpenTimestamps`  | boolean | Stamp each chain hash to the Bitcoin blockchain via OTS.                |
+| `enablePublicAnchor`    | boolean | Publish anchor to a public location (future feature).                   |
+| `logLevel`              | string  | Logging verbosity: `INFO`, `WARNING`, `ERROR`.                          |
+| `verifyIntervalSeconds` | integer | How often (seconds) to run a full directory scan. Min 1.                |
+| `excludePatterns`       | array   | Filename glob patterns to skip (e.g. `"*.tmp"`, `"~$*"`).               |
 
 ---
 
@@ -275,16 +289,20 @@ Unregister-ScheduledTask -TaskName "ForensicWatcher" -Confirm:$false
 
 ## 13. GPG Signing Setup
 
-For Git commit signing to work, configure GPG before running the installer:
+For Git commit signing to work, install GPG and set your key ID in `config.json`:
 
 ```powershell
-# List available keys
+# List available keys — copy the long ID (e.g. ABCD1234EFGH5678)
 gpg --list-secret-keys --keyid-format LONG
-
-# Configure Git to use your key
-git config --global user.signingkey <YOUR-KEY-ID>
-git config --global commit.gpgsign true
 ```
+
+Then set it in `config/config.json`:
+
+```json
+"gpgKeyId": "ABCD1234EFGH5678"
+```
+
+Leave `gpgKeyId` as `""` to fall back to GPG's default key. The watcher validates that the key exists in your keyring on startup and warns if it is not found.
 
 Without GPG signing, Git commits are still created but the identity verification layer is absent.
 
@@ -301,13 +319,16 @@ Without GPG signing, Git commits are still created but the identity verification
 
 ## 15. Common Issues
 
-| Symptom                             | Likely Cause                                | Fix                                            |
-| ----------------------------------- | ------------------------------------------- | ---------------------------------------------- |
-| `Config error: watchPaths is empty` | Config not edited before running            | Set at least one path in `config.json`         |
-| `Chain INVALID` on first run        | `chain_log.csv` was manually edited         | Delete the file; watcher will recreate it      |
-| No `.ots` file generated            | `enableOpenTimestamps` false or no internet | Set to `true` and ensure internet access       |
-| Git commit errors in log            | GPG not configured or no Git repo           | Set up GPG or remove `repoPath` from config    |
-| `Could not hash file` in log        | File locked by another process              | Normal for temp/locked files; no action needed |
+| Symptom                               | Likely Cause                                    | Fix                                                        |
+| ------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------- |
+| `Config error: watchPaths is empty`   | Config not edited before running                | Set at least one path in `config.json`                     |
+| `Config error: installPath not set`   | `installPath` missing from config               | Add `"installPath": "E:\\ForensicSystem"` to `config.json` |
+| `Chain INVALID` on first run          | `chain_log.csv` was manually edited             | Delete the file; watcher will recreate it                  |
+| No `.ots` file generated              | `enableOpenTimestamps` false or no internet     | Set to `true` and ensure internet access                   |
+| Git commit errors in log              | GPG key not found or no Git repo initialised    | Check `gpgKeyId` in config or run `install.ps1` first      |
+| GPG key warning on startup            | `gpgKeyId` not in keyring                       | Run `gpg --list-secret-keys` and correct the ID in config  |
+| Skipped (still being written) in log  | Large file copy in progress                     | Normal — periodic scan will record it once copy finishes   |
+| `Could not hash file` in log          | File locked by another process                  | Normal for temp/locked files; no action needed             |
 
 ---
 

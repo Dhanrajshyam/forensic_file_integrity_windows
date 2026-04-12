@@ -79,8 +79,12 @@ src/
 
 **Important Notes:**
 
-* Avoid duplicate event handling
-* Debounce rapid file changes
+* Debounce window: 2 seconds per path — suppresses duplicate OS events for the same file
+* Deleted events only record files already in `state.json` — temp file deletions are silently dropped
+* Hidden, System, and Temporary file attributes are checked before hashing — OS-managed files are excluded
+* `excludePatterns` in config allows additional glob-based exclusions (e.g. `~$*`, `*.tmp`)
+* Large-file writes: an exclusive-open probe checks the file is no longer locked before hashing. Retries 5 times at 3-second intervals; if still locked the event is skipped and the periodic scan picks it up
+* Batch scan commits: `Start-DirectoryScan` writes all chain entries with `-SkipCommit`, then issues one git commit and one OTS stamp for the whole batch — prevents N×commit overhead on startup or periodic scans over large directories
 
 ---
 
@@ -121,17 +125,16 @@ ChainHash = SHA256(FileHash|PreviousChainHash|Timestamp)
 
 **Responsibilities:**
 
-* Stage changes
-* Commit with timestamp
-* Push to remotes
-
----
+* Copy `chain_log.csv` and `state.json` from `data/` into `repoPath`
+* Stage and commit with a GPG-signed commit
+* Commit message format: `[forensic] <filename> at <timestamp>` (single event) or `[forensic] batch scan: N file(s) at <timestamp>` (scan)
 
 **Rules:**
 
 * Always include timestamp in commit message
 * Never rewrite history
-* Ensure commits are signed
+* GPG key ID is read from `config.gpgKeyId`; falls back to GPG default key if empty
+* `chain_log.csv` and `state.json` are copied into `repoPath` before staging — Git tracks files inside its working tree only
 
 ---
 
@@ -302,15 +305,23 @@ Every change must pass:
 
 ### 11.1 Large Files
 
-* Hashing large videos is expensive
-* Avoid duplicate hashing
+* Hashing large files is expensive — `Get-StableFileHash` probes for an exclusive lock before hashing to ensure the file is complete. Do not add a second `Get-FileHash` call after the probe; that would hash twice.
+* State deduplication (`state.json`) means unchanged files are never re-hashed on periodic scans.
 
 ---
 
 ### 11.2 Event Flooding
 
-* Use debounce mechanism
-* ignore temporary file states
+* The 2-second debounce window in `Invoke-FileEvent` suppresses rapid successive events for the same path.
+* Hidden/System/Temporary attribute check in `Test-ShouldExclude` drops OS-generated files before any hashing occurs.
+* `excludePatterns` in config provides additional name-based filtering — extend this for application-specific temp files.
+
+---
+
+### 11.3 Large Directories (Batch Scans)
+
+* `Start-DirectoryScan` uses `-SkipCommit` on every `Add-ChainEntry` call and issues a single git commit + OTS stamp after all entries are written. This reduces a 100,000-file scan from 100,000 GPG signing operations to 1.
+* `Get-LastChainHash` uses `-Tail 1` to read only the last line of `chain_log.csv` — O(1) regardless of log size.
 
 ---
 

@@ -41,6 +41,12 @@ function Test-Config($config) {
     if (-not $config.repoPath) {
         Write-Warning "Config: 'repoPath' not set, Git integration disabled"
     }
+    if ($config.gpgKeyId) {
+        gpg --list-secret-keys $config.gpgKeyId 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Config: gpgKeyId '$($config.gpgKeyId)' not found in GPG keyring — commits may fail"
+        }
+    }
     if ($null -eq $config.verifyIntervalSeconds -or $config.verifyIntervalSeconds -le 0) {
         throw "Config error: 'verifyIntervalSeconds' must be a positive integer"
     }
@@ -57,7 +63,62 @@ function Invoke-ChainLogLock([scriptblock]$Action) {
     }
 }
 
+# Attempt to hash a file only once it is no longer being written to.
+# Uses an exclusive-open probe: if the file is still locked by a writer,
+# [File]::Open with FileShare.None throws IOException. Retries up to
+# $maxRetries times with $retryDelaySec between attempts.
+# Returns the SHA-256 hash string, or $null if the file is still locked
+# after all retries (caller should skip; periodic scan will catch it later).
+function Get-StableFileHash($path, $maxRetries = 5, $retryDelaySec = 3) {
+    for ($i = 0; $i -lt $maxRetries; $i++) {
+        try {
+            $stream = [System.IO.File]::Open(
+                $path,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::None
+            )
+            $stream.Close()
+            $stream.Dispose()
+            return (Get-FileHash $path -Algorithm SHA256).Hash
+        } catch [System.IO.IOException] {
+            # File is still open for writing
+            if ($i -lt $maxRetries - 1) {
+                Start-Sleep -Seconds $retryDelaySec
+            }
+        } catch {
+            throw  # unexpected error — propagate to caller
+        }
+    }
+    return $null  # still locked; periodic scan will pick it up
+}
+
+# Returns $true if the file should be ignored — hidden/system/temp by attribute,
+# or matched by a name pattern in config.excludePatterns.
+function Test-ShouldExclude($path, $config) {
+    try {
+        $attrs = [System.IO.File]::GetAttributes($path)
+        $skip = [System.IO.FileAttributes]::Hidden -bor
+                [System.IO.FileAttributes]::System -bor
+                [System.IO.FileAttributes]::Temporary
+        if ($attrs -band $skip) { return $true }
+    } catch {
+        return $false  # can't read attributes; let caller decide
+    }
+
+    if ($config.excludePatterns) {
+        $name = [System.IO.Path]::GetFileName($path)
+        foreach ($pattern in $config.excludePatterns) {
+            if ($name -like $pattern) { return $true }
+        }
+    }
+    return $false
+}
+
 function Initialize-Files {
+    New-Item -ItemType Directory -Force -Path "$script:ProjectRoot/data" | Out-Null
+    New-Item -ItemType Directory -Force -Path "$script:ProjectRoot/logs" | Out-Null
+
     if (!(Test-Path "$script:ProjectRoot/data/chain_log.csv")) {
         "FileName,FileHash,Timestamp,ChainHash" | Out-File "$script:ProjectRoot/data/chain_log.csv"
     }
