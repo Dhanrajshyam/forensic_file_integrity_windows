@@ -17,9 +17,9 @@ Write-Host "FORENSIC ATTACK TEST SUITE"
 Write-Host "==============================="
 
 function Write-ChainCsv($rows, $path) {
-    $lines = @("FileName,FileHash,Timestamp,ChainHash")
+    $lines = @("FileName,FullPath,FileHash,Timestamp,ChainHash")
     foreach ($row in $rows) {
-        $lines += "$($row.FileName),$($row.FileHash),$($row.Timestamp),$($row.ChainHash)"
+        $lines += "$($row.FileName),`"$($row.FullPath)`",$($row.FileHash),$($row.Timestamp),$($row.ChainHash)"
     }
     $lines | Out-File $path
 }
@@ -41,7 +41,7 @@ function Start-InitialSetup {
     $timestamp = Get-Timestamp
     $chain = Get-ChainHash $hash "" $timestamp
 
-    "$([System.IO.Path]::GetFileName($TestFile)),$hash,$timestamp,$chain" | Out-File $logFile -Append
+    "$([System.IO.Path]::GetFileName($TestFile)),`"$TestFile`",$hash,$timestamp,$chain" | Out-File $logFile -Append
 }
 
 function Start-MultiEntrySetup {
@@ -53,14 +53,14 @@ function Start-MultiEntrySetup {
     $hash2 = (Get-FileHash $TestFile -Algorithm SHA256).Hash
     $ts2 = Get-Timestamp
     $chain2 = Get-ChainHash $hash2 $prevChain $ts2
-    "$([System.IO.Path]::GetFileName($TestFile)),$hash2,$ts2,$chain2" | Out-File $logFile -Append
+    "$([System.IO.Path]::GetFileName($TestFile)),`"$TestFile`",$hash2,$ts2,$chain2" | Out-File $logFile -Append
 
     # Third entry
     Add-Content $TestFile "third"
     $hash3 = (Get-FileHash $TestFile -Algorithm SHA256).Hash
     $ts3 = Get-Timestamp
     $chain3 = Get-ChainHash $hash3 $chain2 $ts3
-    "$([System.IO.Path]::GetFileName($TestFile)),$hash3,$ts3,$chain3" | Out-File $logFile -Append
+    "$([System.IO.Path]::GetFileName($TestFile)),`"$TestFile`",$hash3,$ts3,$chain3" | Out-File $logFile -Append
 }
 
 function Confirm-TestResult($testName, $condition) {
@@ -74,14 +74,12 @@ function Confirm-TestResult($testName, $condition) {
 }
 
 function Test-ChainIntegrity {
-    $prev = ""
+    $prev  = ""
     $valid = $true
-    Import-Csv $logFile | ForEach-Object {
-        $calc = Get-ChainHash $_.FileHash $prev $_.Timestamp
-        if ($calc -ne $_.ChainHash) {
-            $valid = $false
-        }
-        $prev = $_.ChainHash
+    foreach ($entry in @(Import-Csv $logFile)) {
+        $calc = Get-ChainHash $entry.FileHash $prev $entry.Timestamp
+        if ($calc -ne $entry.ChainHash) { $valid = $false }
+        $prev = $entry.ChainHash
     }
     return $valid
 }

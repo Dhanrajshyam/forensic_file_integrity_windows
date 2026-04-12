@@ -7,11 +7,14 @@ Test-Config $config
 $logFile = "$script:ProjectRoot/data/chain_log.csv"
 $stateFile = "$script:ProjectRoot/data/state.json"
 
-# Load existing file state (path -> last known hash)
-if ((Get-Content $stateFile -Raw).Trim() -ne "{}") {
-    $fileState = Get-Content $stateFile -Raw | ConvertFrom-Json
-} else {
-    $fileState = @{}
+# Load existing file state (path -> last known hash) as a proper Hashtable.
+# ConvertFrom-Json returns PSCustomObject, not Hashtable, so .ContainsKey() would
+# never work. We explicitly convert each property into a hashtable entry.
+$fileState = @{}
+$raw = (Get-Content $stateFile -Raw).Trim()
+if ($raw -ne "{}" -and $raw -ne "") {
+    $loaded = $raw | ConvertFrom-Json
+    $loaded.PSObject.Properties | ForEach-Object { $fileState[$_.Name] = $_.Value }
 }
 
 # Debounce tracking (path -> last event time)
@@ -23,22 +26,76 @@ function Save-State {
 }
 
 function Get-LastChainHash {
-    $lines = Get-Content $logFile
-    if ($lines.Count -le 1) { return "" }
-    $lastLine = $lines[-1]
-    $fields = $lastLine -split ","
-    return $fields[-1]
+    # -Tail 1 reads only the final line - avoids O(n) full-file read on every entry
+    $lastLine = Get-Content $logFile -Tail 1
+    if (-not $lastLine -or $lastLine -match "^FileName") { return "" }
+    # ChainHash is always a 64-char lowercase hex string at end of line
+    if ($lastLine -match '[0-9a-f]{64}$') { return $matches[0] }
+    return ""
+}
+
+# Archive chain_log.csv to chain_log_YYYY-MM.csv when the month changes.
+# Called at startup and before each periodic scan. Runs inside the chain log
+# mutex so no write can race with the rename.
+function Invoke-ChainLogRotation {
+    Invoke-ChainLogLock {
+        # @() forces an array regardless of whether Get-Content returns a string
+        # (1 line) or an array (2+ lines) - makes .Count reliable in PS5.
+        $lines = @(Get-Content $logFile -TotalCount 2)
+        if ($lines.Count -lt 2) { return }
+        $firstDataLine = $lines[1]
+        if (-not $firstDataLine.Trim()) { return }
+
+        # ConvertFrom-Csv handles quoted FullPath field correctly
+        $firstEntry = $firstDataLine | ConvertFrom-Csv -Header "FileName","FullPath","FileHash","Timestamp","ChainHash"
+        if (-not $firstEntry.Timestamp) { return }
+
+        $logMonth     = $firstEntry.Timestamp.Substring(0, 7)   # "yyyy-MM"
+        $currentMonth = Get-Date -Format "yyyy-MM"
+
+        if ($logMonth -ne $currentMonth) {
+            $archiveName = "$script:ProjectRoot/data/chain_log_$logMonth.csv"
+            Move-Item $logFile $archiveName -Force
+            "FileName,FullPath,FileHash,Timestamp,ChainHash" | Out-File $logFile
+            Write-LogEntry "INFO" "Chain log rotated: archived as chain_log_$logMonth.csv"
+            Write-Host "Chain log rotated: new log started for $currentMonth"
+        }
+    }
 }
 
 function Save-ChainState($message) {
     if (-not $config.repoPath -or -not (Test-Path "$($config.repoPath)/.git")) {
         return
     }
+    # GPG: use configured key ID when set, otherwise use GPG default key
+    $gpgArg = if ($config.gpgKeyId) { "--gpg-sign=$($config.gpgKeyId)" } else { "--gpg-sign" }
+
+    # Each system writes into its own named subfolder inside the shared repo.
+    # This allows desktop, android, truenas etc. to share one repo without
+    # overwriting each other's chain_log.csv and state.json.
+    $systemFolder = Join-Path $config.repoPath $config.systemName
+    $rel          = $config.systemName   # relative path used in git add
+
     try {
-        git -C $config.repoPath add chain_log.csv state.json 2>&1 | Out-Null
-        git -C $config.repoPath commit -m "$message" --gpg-sign 2>&1 | Out-Null
+        New-Item -ItemType Directory -Force -Path $systemFolder | Out-Null
+
+        Copy-Item "$script:ProjectRoot/data/chain_log.csv" $systemFolder -Force
+        Copy-Item "$script:ProjectRoot/data/state.json"    $systemFolder -Force
+
+        git -C "$($config.repoPath)" add "$rel/chain_log.csv" "$rel/state.json" 2>&1 | Out-Null
+
+        # Include the OTS proof if it already exists from a previous stamp cycle
+        $otsLocal = "$script:ProjectRoot/data/latest_hash.txt.ots"
+        if (Test-Path $otsLocal) {
+            Copy-Item $otsLocal $systemFolder -Force
+            git -C "$($config.repoPath)" add "$rel/latest_hash.txt.ots" 2>&1 | Out-Null
+        }
+
+        git -C "$($config.repoPath)" commit -m "$message" $gpgArg 2>&1 | Out-Null
+        # --set-upstream handles both the first push and all subsequent ones
+        git -C "$($config.repoPath)" push --set-upstream origin HEAD 2>&1 | Out-Null
     } catch {
-        Write-LogEntry "WARNING" "Git commit failed: $_"
+        Write-LogEntry "WARNING" "Git commit/push failed: $_"
     }
 }
 
@@ -56,20 +113,22 @@ function New-Timestamp($chainHash) {
     }
 }
 
-function Add-ChainEntry($fileName, $fileHash) {
-    $chainHash = $null
+function Add-ChainEntry($fileName, $fullPath, $fileHash, [switch]$SkipCommit) {
     Invoke-ChainLogLock {
         $timestamp = Get-Timestamp
         $prevHash = Get-LastChainHash
         $script:chainHash = Get-ChainHash $fileHash $prevHash $timestamp
 
-        "$fileName,$fileHash,$timestamp,$($script:chainHash)" | Out-File $logFile -Append
+        # Quote FullPath to handle spaces and special characters in CSV
+        "$fileName,`"$fullPath`",$fileHash,$timestamp,$($script:chainHash)" | Out-File $logFile -Append
     }
 
     Write-LogEntry "EVENT" "Recorded: $fileName (Hash: $($fileHash.Substring(0, 12))...)"
 
-    Save-ChainState "[forensic] $fileName at $(Get-Timestamp)"
-    New-Timestamp $script:chainHash
+    if (-not $SkipCommit) {
+        Save-ChainState "[autocommit - desktop_pc_shyam] $fileName at $(Get-Timestamp)"
+        New-Timestamp $script:chainHash
+    }
 }
 
 function Invoke-FileEvent($path, $changeType) {
@@ -86,21 +145,21 @@ function Invoke-FileEvent($path, $changeType) {
     switch ($changeType) {
         { $_ -in "Created", "Changed" } {
             if (-not (Test-Path $path)) { return }
+            if (Test-ShouldExclude $path $config) { return }
 
-            try {
-                $hash = (Get-FileHash $path -Algorithm SHA256).Hash
-            } catch {
-                Write-LogEntry "WARNING" "Could not hash file: $path - $_"
+            $hash = Get-StableFileHash $path
+            if ($null -eq $hash) {
+                Write-LogEntry "INFO" "Skipped (still being written, periodic scan will catch it): $fileName"
                 return
             }
 
             # Skip if hash hasn't changed
             $stateKey = $path.Replace("\", "/")
-            if ($fileState -is [hashtable] -and $fileState.ContainsKey($stateKey) -and $fileState[$stateKey] -eq $hash) {
+            if ($fileState.ContainsKey($stateKey) -and $fileState[$stateKey] -eq $hash) {
                 return
             }
 
-            Add-ChainEntry $fileName $hash
+            Add-ChainEntry $fileName $path $hash
             $fileState[$stateKey] = $hash
             Save-State
 
@@ -108,29 +167,34 @@ function Invoke-FileEvent($path, $changeType) {
         }
         "Deleted" {
             $stateKey = $path.Replace("\", "/")
-            $lastKnown = ""
-            if ($fileState -is [hashtable] -and $fileState.ContainsKey($stateKey)) {
-                $lastKnown = $fileState[$stateKey]
-                $fileState.Remove($stateKey)
-                Save-State
-            }
+
+            # Only record deletion if the file was previously tracked.
+            # This silently drops deletions of temp/hidden files that were
+            # never recorded in the first place (e.g. ~$lock files).
+            if (-not $fileState.ContainsKey($stateKey)) { return }
+
+            $lastKnown = $fileState[$stateKey]
+            $fileState.Remove($stateKey)
+            Save-State
 
             $deleteHash = "DELETED:$lastKnown"
-            Add-ChainEntry $fileName $deleteHash
+            Add-ChainEntry $fileName $path $deleteHash
 
             Write-Host "[$(Get-Timestamp)] Deleted: $fileName"
         }
         "Renamed" {
             if (Test-Path $path) {
-                try {
-                    $hash = (Get-FileHash $path -Algorithm SHA256).Hash
-                    Add-ChainEntry $fileName $hash
-                    $stateKey = $path.Replace("\", "/")
-                    $fileState[$stateKey] = $hash
-                    Save-State
-                } catch {
-                    Write-LogEntry "WARNING" "Could not hash renamed file: $path - $_"
+                if (Test-ShouldExclude $path $config) { return }
+
+                $hash = Get-StableFileHash $path
+                if ($null -eq $hash) {
+                    Write-LogEntry "INFO" "Skipped renamed file (still locked): $fileName"
+                    return
                 }
+                Add-ChainEntry $fileName $path $hash
+                $stateKey = $path.Replace("\", "/")
+                $fileState[$stateKey] = $hash
+                Save-State
             }
 
             Write-Host "[$(Get-Timestamp)] Renamed: $fileName"
@@ -139,6 +203,8 @@ function Invoke-FileEvent($path, $changeType) {
 }
 
 function Start-DirectoryScan($watchPaths) {
+    $changedCount = 0
+
     foreach ($watchPath in $watchPaths) {
         if (-not (Test-Path $watchPath)) { continue }
 
@@ -146,23 +212,33 @@ function Start-DirectoryScan($watchPaths) {
             $path = $_.FullName
             $stateKey = $path.Replace("\", "/")
 
-            try {
-                $hash = (Get-FileHash $path -Algorithm SHA256).Hash
-            } catch {
-                return  # skip files we can't read
+            if (Test-ShouldExclude $path $config) { return }
+
+            $hash = Get-StableFileHash $path
+            if ($null -eq $hash) {
+                Write-LogEntry "INFO" "Skipped during scan (still being written): $([System.IO.Path]::GetFileName($path))"
+                return
             }
 
-            if (-not ($fileState -is [hashtable]) -or
-                -not $fileState.ContainsKey($stateKey) -or
-                $fileState[$stateKey] -ne $hash) {
+            if (-not $fileState.ContainsKey($stateKey) -or $fileState[$stateKey] -ne $hash) {
 
                 $fileName = [System.IO.Path]::GetFileName($path)
-                Add-ChainEntry $fileName $hash
+                # -SkipCommit: accumulate all entries first, commit once at the end
+                Add-ChainEntry $fileName $path $hash -SkipCommit
                 $fileState[$stateKey] = $hash
+                $changedCount++
             }
         }
     }
+
     Save-State
+
+    # One batched commit + OTS stamp for the entire scan
+    if ($changedCount -gt 0) {
+        Save-ChainState "[autocommit - desktop_pc_shyam] batch scan: $changedCount file(s) at $(Get-Timestamp)"
+        New-Timestamp $script:chainHash
+        Write-LogEntry "INFO" "Batch scan committed $changedCount file(s)"
+    }
 }
 
 # --- Main ---
@@ -177,6 +253,9 @@ Write-Host "Watch paths: $($watchPaths -join ', ')"
 Write-Host "Verify interval: ${verifyInterval}s"
 
 Write-LogEntry "INFO" "Watcher started. Monitoring: $($watchPaths -join ', ')"
+
+# Check for month rollover and rotate log before first scan
+Invoke-ChainLogRotation
 
 # Initial full scan
 Start-DirectoryScan $watchPaths
@@ -215,9 +294,10 @@ try {
         Write-Host "Watching: $watchPath"
     }
 
-    # Main loop: periodic full scan to catch any missed events
+    # Main loop: check for month rollover then run periodic full scan
     while ($true) {
         Start-Sleep -Seconds $verifyInterval
+        Invoke-ChainLogRotation
         Write-Host "[$(Get-Timestamp)] Running periodic scan..."
         Start-DirectoryScan $watchPaths
     }

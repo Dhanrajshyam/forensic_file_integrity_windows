@@ -83,28 +83,38 @@ No single component is trusted completely.
 
 #### Watcher
 
-* Monitors configured folders
-* Detects file events (create/modify/delete)
+* Monitors configured folders using `System.IO.FileSystemWatcher`
+* Detects file events (Created, Changed, Deleted, Renamed)
+* Debounces events per path (2-second window)
+* Skips hidden, system, temporary, and excluded-pattern files
+* Probes for exclusive file lock before hashing to avoid partial reads on in-progress copies
+* Runs a full periodic scan every `verifyIntervalSeconds` to catch any missed events
 
 #### Hash Engine
 
-* Computes SHA-256 hash
-* Ensures deterministic output
+* Computes SHA-256 hash via `Get-FileHash`
+* Lock probe (`FileShare.None`) ensures file is fully written before hashing
+* Returns `$null` if file is still locked after retries — caller defers to periodic scan
 
 #### Chain Logger
 
-* Maintains append-only log
-* Links each entry to previous entry
+* Maintains append-only `chain_log.csv`
+* Links each entry to the previous via `ChainHash = SHA256(FileHash|PrevChainHash|Timestamp)`
+* Protected by a named system mutex (`Global\ForensicChainLogMutex`) for concurrent-safe writes
+* Reads last chain hash with `-Tail 1` — O(1) regardless of log size
+* Batch scan mode: entries accumulated with `-SkipCommit`; one Git commit covers the whole scan
 
 #### Git Engine
 
-* Commits changes
-* Pushes to multiple remotes
+* Copies `chain_log.csv` and `state.json` from `data/` into `repoPath` before staging
+* Signs commits with GPG key specified in `config.gpgKeyId` (falls back to GPG default if empty)
+* Commit message includes file name and ISO-8601 timestamp (or batch count for scans)
 
 #### Anchor Engine
 
-* Generates OpenTimestamps proof
-* Publishes public anchor
+* Generates OpenTimestamps proof anchored to Bitcoin blockchain
+* Stores proof at `data/latest_hash.txt.ots`
+* One stamp per event (real-time) or per batch scan
 
 #### Verifier
 

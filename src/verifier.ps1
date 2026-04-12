@@ -1,30 +1,38 @@
+param([string]$OutputPath = "")
+
 . "$PSScriptRoot/utils.ps1"
 
 Initialize-Files
 
 $logFile = "$script:ProjectRoot/data/chain_log.csv"
+$output  = [System.Collections.ArrayList]@()
+
+function Out-Result($message) {
+    Write-Host $message
+    $output.Add($message) | Out-Null
+}
 
 $entries = $null
 Invoke-ChainLogLock { $script:entries = @(Import-Csv $logFile) }
 
-$prev = ""
+$prev  = ""
 $valid = $true
 
-$entries | ForEach-Object {
-    $calc = Get-ChainHash $_.FileHash $prev $_.Timestamp
+foreach ($entry in $entries) {
+    $calc = Get-ChainHash $entry.FileHash $prev $entry.Timestamp
 
-    if ($calc -ne $_.ChainHash) {
-        Write-LogEntry "ALERT" "Chain broken at $($_.FileName)"
+    if ($calc -ne $entry.ChainHash) {
+        Write-LogEntry "ALERT" "Chain broken at $($entry.FileName)"
         $valid = $false
     }
 
-    $prev = $_.ChainHash
+    $prev = $entry.ChainHash
 }
 
 if ($valid) {
-    Write-Host "Chain VALID"
+    Out-Result "Chain VALID"
 } else {
-    Write-Host "Chain INVALID"
+    Out-Result "Chain INVALID"
 }
 
 # Git verification
@@ -33,24 +41,29 @@ if ($config.repoPath -and (Test-Path "$($config.repoPath)/.git")) {
     try {
         $gitCheck = git -C $config.repoPath log --pretty="%G?"
         if ($gitCheck -match "N") {
-            Write-Host "Unsigned commits detected"
+            Out-Result "Unsigned commits detected"
         } else {
-            Write-Host "Git signatures OK"
+            Out-Result "Git signatures OK"
         }
     } catch {
         Write-Warning "Git verification failed: $_"
         Write-LogEntry "WARNING" "Git verification failed: $_"
     }
 } else {
-    Write-Host "Git verification skipped (no repo configured)"
+    Out-Result "Git verification skipped (no repo configured)"
 }
 
 # OpenTimestamp verify
 if ($config.enableOpenTimestamps -and (Test-Path "$script:ProjectRoot/data/latest_hash.txt.ots")) {
     try {
-        python -m opentimestamps_client.cmds verify "$script:ProjectRoot/data/latest_hash.txt.ots"
+        $otsResult = python -m opentimestamps_client.cmds verify "$script:ProjectRoot/data/latest_hash.txt.ots" 2>&1
+        Out-Result "OpenTimestamps: $otsResult"
     } catch {
         Write-Warning "OpenTimestamps verification failed: $_"
         Write-LogEntry "WARNING" "OpenTimestamps verification failed: $_"
     }
+}
+
+if ($OutputPath) {
+    $output | Out-File $OutputPath -Encoding UTF8
 }
