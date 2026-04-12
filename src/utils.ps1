@@ -126,7 +126,7 @@ function Initialize-Files {
     New-Item -ItemType Directory -Force -Path "$script:ProjectRoot/logs" | Out-Null
 
     if (!(Test-Path "$script:ProjectRoot/data/chain_log.csv")) {
-        "FileName,FileHash,Timestamp,ChainHash" | Out-File "$script:ProjectRoot/data/chain_log.csv"
+        "FileName,FullPath,FileHash,Timestamp,ChainHash" | Out-File "$script:ProjectRoot/data/chain_log.csv"
     }
 
     if (!(Test-Path "$script:ProjectRoot/data/state.json")) {

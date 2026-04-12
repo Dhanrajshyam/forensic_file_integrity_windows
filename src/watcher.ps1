@@ -28,9 +28,37 @@ function Save-State {
 function Get-LastChainHash {
     # -Tail 1 reads only the final line - avoids O(n) full-file read on every entry
     $lastLine = Get-Content $logFile -Tail 1
-    if (-not $lastLine -or $lastLine -eq "FileName,FileHash,Timestamp,ChainHash") { return "" }
-    $fields = $lastLine -split ","
-    return $fields[-1]
+    if (-not $lastLine -or $lastLine -match "^FileName") { return "" }
+    # ChainHash is always a 64-char lowercase hex string at end of line
+    if ($lastLine -match '[0-9a-f]{64}$') { return $matches[0] }
+    return ""
+}
+
+# Archive chain_log.csv to chain_log_YYYY-MM.csv when the month changes.
+# Called at startup and before each periodic scan. Runs inside the chain log
+# mutex so no write can race with the rename.
+function Invoke-ChainLogRotation {
+    Invoke-ChainLogLock {
+        $lines = Get-Content $logFile -TotalCount 2
+        if ($lines.Count -lt 2) { return }
+        $firstDataLine = $lines[1]
+        if (-not $firstDataLine.Trim()) { return }
+
+        # ConvertFrom-Csv handles quoted FullPath field correctly
+        $firstEntry = $firstDataLine | ConvertFrom-Csv -Header "FileName","FullPath","FileHash","Timestamp","ChainHash"
+        if (-not $firstEntry.Timestamp) { return }
+
+        $logMonth     = $firstEntry.Timestamp.Substring(0, 7)   # "yyyy-MM"
+        $currentMonth = Get-Date -Format "yyyy-MM"
+
+        if ($logMonth -ne $currentMonth) {
+            $archiveName = "$script:ProjectRoot/data/chain_log_$logMonth.csv"
+            Move-Item $logFile $archiveName -Force
+            "FileName,FullPath,FileHash,Timestamp,ChainHash" | Out-File $logFile -Encoding UTF8
+            Write-LogEntry "INFO" "Chain log rotated: archived as chain_log_$logMonth.csv"
+            Write-Host "Chain log rotated: new log started for $currentMonth"
+        }
+    }
 }
 
 function Save-ChainState($message) {
@@ -83,13 +111,14 @@ function New-Timestamp($chainHash) {
     }
 }
 
-function Add-ChainEntry($fileName, $fileHash, [switch]$SkipCommit) {
+function Add-ChainEntry($fileName, $fullPath, $fileHash, [switch]$SkipCommit) {
     Invoke-ChainLogLock {
         $timestamp = Get-Timestamp
         $prevHash = Get-LastChainHash
         $script:chainHash = Get-ChainHash $fileHash $prevHash $timestamp
 
-        "$fileName,$fileHash,$timestamp,$($script:chainHash)" | Out-File $logFile -Append
+        # Quote FullPath to handle spaces and special characters in CSV
+        "$fileName,`"$fullPath`",$fileHash,$timestamp,$($script:chainHash)" | Out-File $logFile -Append
     }
 
     Write-LogEntry "EVENT" "Recorded: $fileName (Hash: $($fileHash.Substring(0, 12))...)"
@@ -128,7 +157,7 @@ function Invoke-FileEvent($path, $changeType) {
                 return
             }
 
-            Add-ChainEntry $fileName $hash
+            Add-ChainEntry $fileName $path $hash
             $fileState[$stateKey] = $hash
             Save-State
 
@@ -147,7 +176,7 @@ function Invoke-FileEvent($path, $changeType) {
             Save-State
 
             $deleteHash = "DELETED:$lastKnown"
-            Add-ChainEntry $fileName $deleteHash
+            Add-ChainEntry $fileName $path $deleteHash
 
             Write-Host "[$(Get-Timestamp)] Deleted: $fileName"
         }
@@ -160,7 +189,7 @@ function Invoke-FileEvent($path, $changeType) {
                     Write-LogEntry "INFO" "Skipped renamed file (still locked): $fileName"
                     return
                 }
-                Add-ChainEntry $fileName $hash
+                Add-ChainEntry $fileName $path $hash
                 $stateKey = $path.Replace("\", "/")
                 $fileState[$stateKey] = $hash
                 Save-State
@@ -193,7 +222,7 @@ function Start-DirectoryScan($watchPaths) {
 
                 $fileName = [System.IO.Path]::GetFileName($path)
                 # -SkipCommit: accumulate all entries first, commit once at the end
-                Add-ChainEntry $fileName $hash -SkipCommit
+                Add-ChainEntry $fileName $path $hash -SkipCommit
                 $fileState[$stateKey] = $hash
                 $changedCount++
             }
@@ -222,6 +251,9 @@ Write-Host "Watch paths: $($watchPaths -join ', ')"
 Write-Host "Verify interval: ${verifyInterval}s"
 
 Write-LogEntry "INFO" "Watcher started. Monitoring: $($watchPaths -join ', ')"
+
+# Check for month rollover and rotate log before first scan
+Invoke-ChainLogRotation
 
 # Initial full scan
 Start-DirectoryScan $watchPaths
@@ -260,9 +292,10 @@ try {
         Write-Host "Watching: $watchPath"
     }
 
-    # Main loop: periodic full scan to catch any missed events
+    # Main loop: check for month rollover then run periodic full scan
     while ($true) {
         Start-Sleep -Seconds $verifyInterval
+        Invoke-ChainLogRotation
         Write-Host "[$(Get-Timestamp)] Running periodic scan..."
         Start-DirectoryScan $watchPaths
     }

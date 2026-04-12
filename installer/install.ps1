@@ -38,18 +38,33 @@ if ($config.repoPath) {
     }
 }
 
-# Setup scheduled task
-$action = New-ScheduledTaskAction `
+# Scheduled task: watcher (runs at system startup)
+$watcherAction = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
     -Argument "-ExecutionPolicy Bypass -File `"$InstallPath\src\watcher.ps1`"" `
     -WorkingDirectory $InstallPath
 
-$trigger = New-ScheduledTaskTrigger -AtStartup
+$startupTrigger = New-ScheduledTaskTrigger -AtStartup
 
 Register-ScheduledTask `
     -TaskName "ForensicWatcher" `
-    -Action $action `
-    -Trigger $trigger `
+    -Action $watcherAction `
+    -Trigger $startupTrigger `
+    -RunLevel Highest `
+    -Force
+
+# Scheduled task: monthly maintenance (1st of each month at 02:00)
+$maintenanceAction = New-ScheduledTaskAction `
+    -Execute "powershell.exe" `
+    -Argument "-ExecutionPolicy Bypass -File `"$InstallPath\src\monthly_maintenance.ps1`"" `
+    -WorkingDirectory $InstallPath
+
+$monthlyTrigger = New-ScheduledTaskTrigger -Monthly -DaysOfMonth 1 -At "02:00"
+
+Register-ScheduledTask `
+    -TaskName "ForensicMonthlyMaintenance" `
+    -Action $maintenanceAction `
+    -Trigger $monthlyTrigger `
     -RunLevel Highest `
     -Force
 
