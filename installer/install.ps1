@@ -24,11 +24,18 @@ New-Item -ItemType Directory -Force -Path "$InstallPath\logs"  | Out-Null
 Copy-Item "$PSScriptRoot\..\src"    $InstallPath -Recurse -Force
 Copy-Item "$PSScriptRoot\..\config" $InstallPath -Recurse -Force
 
-# Initialize Git evidence repo if configured
-if ($config.repoPath -and -not (Test-Path "$($config.repoPath)\.git")) {
-    New-Item -ItemType Directory -Force -Path $config.repoPath | Out-Null
-    git init $config.repoPath
-    Write-Host "Git repo initialized at $($config.repoPath)"
+# Initialize Git evidence repo and system subfolder if configured
+if ($config.repoPath) {
+    if (-not (Test-Path "$($config.repoPath)\.git")) {
+        New-Item -ItemType Directory -Force -Path $config.repoPath | Out-Null
+        git init $config.repoPath
+        Write-Host "Git repo initialized at $($config.repoPath)"
+    }
+    if ($config.systemName) {
+        $systemFolder = Join-Path $config.repoPath $config.systemName
+        New-Item -ItemType Directory -Force -Path $systemFolder | Out-Null
+        Write-Host "System folder created: $systemFolder"
+    }
 }
 
 # Setup scheduled task

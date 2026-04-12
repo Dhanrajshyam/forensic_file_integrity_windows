@@ -41,10 +41,16 @@ function Test-Config($config) {
     if (-not $config.repoPath) {
         Write-Warning "Config: 'repoPath' not set, Git integration disabled"
     }
+    if (-not $config.systemName) {
+        throw "Config error: 'systemName' is required (e.g. 'desktop', 'android', 'truenas')"
+    }
+    if ($config.systemName -match '[\\/:*?"<>|]') {
+        throw "Config error: 'systemName' contains invalid characters for a folder name"
+    }
     if ($config.gpgKeyId) {
         gpg --list-secret-keys $config.gpgKeyId 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Config: gpgKeyId '$($config.gpgKeyId)' not found in GPG keyring — commits may fail"
+            Write-Warning "Config: gpgKeyId '$($config.gpgKeyId)' not found in GPG keyring - commits may fail"
         }
     }
     if ($null -eq $config.verifyIntervalSeconds -or $config.verifyIntervalSeconds -le 0) {
@@ -87,13 +93,13 @@ function Get-StableFileHash($path, $maxRetries = 5, $retryDelaySec = 3) {
                 Start-Sleep -Seconds $retryDelaySec
             }
         } catch {
-            throw  # unexpected error — propagate to caller
+            throw  # unexpected error - propagate to caller
         }
     }
     return $null  # still locked; periodic scan will pick it up
 }
 
-# Returns $true if the file should be ignored — hidden/system/temp by attribute,
+# Returns $true if the file should be ignored - hidden/system/temp by attribute,
 # or matched by a name pattern in config.excludePatterns.
 function Test-ShouldExclude($path, $config) {
     try {

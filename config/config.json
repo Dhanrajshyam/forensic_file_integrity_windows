@@ -4,6 +4,7 @@
     ],
     "installPath": "E:\\ForensicSystem",
     "repoPath": "E:\\dataHashRepo",
+    "systemName": "desktop_pc_shyam",
     "gpgKeyId": "E9D24CA626E62ED2",
     "enableOpenTimestamps": true,
     "enablePublicAnchor": true,

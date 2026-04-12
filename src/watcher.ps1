@@ -26,7 +26,7 @@ function Save-State {
 }
 
 function Get-LastChainHash {
-    # -Tail 1 reads only the final line — avoids O(n) full-file read on every entry
+    # -Tail 1 reads only the final line - avoids O(n) full-file read on every entry
     $lastLine = Get-Content $logFile -Tail 1
     if (-not $lastLine -or $lastLine -eq "FileName,FileHash,Timestamp,ChainHash") { return "" }
     $fields = $lastLine -split ","
@@ -39,16 +39,33 @@ function Save-ChainState($message) {
     }
     # GPG: use configured key ID when set, otherwise use GPG default key
     $gpgArg = if ($config.gpgKeyId) { "--gpg-sign=$($config.gpgKeyId)" } else { "--gpg-sign" }
+
+    # Each system writes into its own named subfolder inside the shared repo.
+    # This allows desktop, android, truenas etc. to share one repo without
+    # overwriting each other's chain_log.csv and state.json.
+    $systemFolder = Join-Path $config.repoPath $config.systemName
+    $rel          = $config.systemName   # relative path used in git add
+
     try {
-        # chain_log.csv and state.json live in $ProjectRoot/data, which may be a
-        # different location from $config.repoPath. Copy them into the repo so git
-        # can track them — the repo is purely an evidence archive of these two files.
-        Copy-Item "$script:ProjectRoot/data/chain_log.csv" $config.repoPath -Force
-        Copy-Item "$script:ProjectRoot/data/state.json"    $config.repoPath -Force
-        git -C "$($config.repoPath)" add chain_log.csv state.json 2>&1 | Out-Null
+        New-Item -ItemType Directory -Force -Path $systemFolder | Out-Null
+
+        Copy-Item "$script:ProjectRoot/data/chain_log.csv" $systemFolder -Force
+        Copy-Item "$script:ProjectRoot/data/state.json"    $systemFolder -Force
+
+        git -C "$($config.repoPath)" add "$rel/chain_log.csv" "$rel/state.json" 2>&1 | Out-Null
+
+        # Include the OTS proof if it already exists from a previous stamp cycle
+        $otsLocal = "$script:ProjectRoot/data/latest_hash.txt.ots"
+        if (Test-Path $otsLocal) {
+            Copy-Item $otsLocal $systemFolder -Force
+            git -C "$($config.repoPath)" add "$rel/latest_hash.txt.ots" 2>&1 | Out-Null
+        }
+
         git -C "$($config.repoPath)" commit -m "$message" $gpgArg 2>&1 | Out-Null
+        # --set-upstream handles both the first push and all subsequent ones
+        git -C "$($config.repoPath)" push --set-upstream origin HEAD 2>&1 | Out-Null
     } catch {
-        Write-LogEntry "WARNING" "Git commit failed: $_"
+        Write-LogEntry "WARNING" "Git commit/push failed: $_"
     }
 }
 
@@ -175,7 +192,7 @@ function Start-DirectoryScan($watchPaths) {
             if (-not $fileState.ContainsKey($stateKey) -or $fileState[$stateKey] -ne $hash) {
 
                 $fileName = [System.IO.Path]::GetFileName($path)
-                # SkipCommit: accumulate all entries first, commit once at the end
+                # -SkipCommit: accumulate all entries first, commit once at the end
                 Add-ChainEntry $fileName $hash -SkipCommit
                 $fileState[$stateKey] = $hash
                 $changedCount++

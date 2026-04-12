@@ -85,17 +85,18 @@ Edit `config/config.json` before running:
 
 ### Configuration Options
 
-| Key                     | Type    | Description                                                             |
-| ----------------------- | ------- | ----------------------------------------------------------------------- |
-| `watchPaths`            | array   | Folders to monitor. Must be non-empty. Warns if path not found.         |
-| `installPath`           | string  | Where the installer copies files (e.g. `E:\ForensicSystem`). Required.  |
-| `repoPath`              | string  | Path to the Git evidence repo. Optional; disables Git if omitted.       |
-| `gpgKeyId`              | string  | GPG key ID for signed commits. Leave `""` to use GPG default key.       |
-| `enableOpenTimestamps`  | boolean | Stamp each chain hash to the Bitcoin blockchain via OTS.                |
-| `enablePublicAnchor`    | boolean | Publish anchor to a public location (future feature).                   |
-| `logLevel`              | string  | Logging verbosity: `INFO`, `WARNING`, `ERROR`.                          |
-| `verifyIntervalSeconds` | integer | How often (seconds) to run a full directory scan. Min 1.                |
-| `excludePatterns`       | array   | Filename glob patterns to skip (e.g. `"*.tmp"`, `"~$*"`).               |
+| Key | Type | Description |
+| --- | --- | --- |
+| `watchPaths` | array | Folders to monitor. Must be non-empty. Warns if path not found. |
+| `installPath` | string | Where the installer copies files (e.g. `E:\ForensicSystem`). Required. |
+| `repoPath` | string | Path to the Git evidence repo. Optional; disables Git if omitted. |
+| `systemName` | string | Subfolder in `repoPath` for this machine (e.g. `desktop`, `android`, `truenas`). Required if `repoPath` is set. |
+| `gpgKeyId` | string | GPG key ID for signed commits. Leave `""` to use GPG default key. |
+| `enableOpenTimestamps` | boolean | Stamp each chain hash to the Bitcoin blockchain via OTS. |
+| `enablePublicAnchor` | boolean | Publish anchor to a public location (future feature). |
+| `logLevel` | string | Logging verbosity: `INFO`, `WARNING`, `ERROR`. |
+| `verifyIntervalSeconds` | integer | How often (seconds) to run a full directory scan. Min 1. |
+| `excludePatterns` | array | Filename glob patterns to skip (e.g. `"*.tmp"`, `"~$*"`). |
 
 ---
 
