@@ -1,6 +1,6 @@
 {
     "watchPaths": [
-        "E:\\test folerd"
+        "E:\\dataToHash"
     ],
     "installPath": "E:\\ForensicSystem",
     "repoPath": "E:\\dataHashRepo",

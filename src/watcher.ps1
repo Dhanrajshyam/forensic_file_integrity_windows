@@ -39,7 +39,9 @@ function Get-LastChainHash {
 # mutex so no write can race with the rename.
 function Invoke-ChainLogRotation {
     Invoke-ChainLogLock {
-        $lines = Get-Content $logFile -TotalCount 2
+        # @() forces an array regardless of whether Get-Content returns a string
+        # (1 line) or an array (2+ lines) - makes .Count reliable in PS5.
+        $lines = @(Get-Content $logFile -TotalCount 2)
         if ($lines.Count -lt 2) { return }
         $firstDataLine = $lines[1]
         if (-not $firstDataLine.Trim()) { return }
@@ -54,7 +56,7 @@ function Invoke-ChainLogRotation {
         if ($logMonth -ne $currentMonth) {
             $archiveName = "$script:ProjectRoot/data/chain_log_$logMonth.csv"
             Move-Item $logFile $archiveName -Force
-            "FileName,FullPath,FileHash,Timestamp,ChainHash" | Out-File $logFile -Encoding UTF8
+            "FileName,FullPath,FileHash,Timestamp,ChainHash" | Out-File $logFile
             Write-LogEntry "INFO" "Chain log rotated: archived as chain_log_$logMonth.csv"
             Write-Host "Chain log rotated: new log started for $currentMonth"
         }

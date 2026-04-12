@@ -233,7 +233,40 @@ Output is printed to the console and saved to `data/audit_report_<timestamp>.txt
 
 ---
 
-## 10. Running Attack Tests
+## 10. Weekly Maintenance
+
+The installer registers a scheduled task (`ForensicWeeklyMaintenance`) that runs every Sunday at 02:00. It can also be run manually at any time:
+
+```powershell
+.\src\weekly_maintenance.ps1
+```
+
+It runs the forensic report, verifier, and audit script in sequence, then copies each report to the forensic Git repo under `repoPath/systemName/`:
+
+```text
+reports/          forensic_report_yyyy-MM-dd.txt
+verifier_reports/ verifier_report_yyyy-MM-dd.txt
+audit_reports/    audit_report_yyyy-MM-dd.txt
+```
+
+All three are committed and pushed in a single signed commit so the weekly snapshot is preserved in the tamper-evident audit trail.
+
+To manage the task:
+
+```powershell
+# Run now (without waiting for Sunday)
+Start-ScheduledTask -TaskName "ForensicWeeklyMaintenance"
+
+# Check status
+Get-ScheduledTask -TaskName "ForensicWeeklyMaintenance"
+
+# Disable
+Disable-ScheduledTask -TaskName "ForensicWeeklyMaintenance"
+```
+
+---
+
+## 11. Running Attack Tests
 
 The test suite simulates five attack scenarios against the chain:
 
@@ -255,7 +288,7 @@ Exit code equals the number of failed tests (0 = all passed).
 
 ---
 
-## 11. File and Directory Layout
+## 12. File and Directory Layout
 
 ```text
 forensic-file-integrity/
@@ -290,7 +323,7 @@ forensic-file-integrity/
 
 ---
 
-## 12. Interpreting the Chain Log
+## 13. Interpreting the Chain Log
 
 `data/chain_log.csv` is an append-only CSV with five columns:
 
@@ -315,29 +348,34 @@ Each `ChainHash` depends on the previous row's `ChainHash`, so any edit to any p
 
 ---
 
-## 13. Scheduled Task (Installer)
+## 14. Scheduled Tasks (Installer)
 
-After running the installer, the watcher runs automatically at system startup under the `ForensicWatcher` scheduled task with elevated privileges.
+The installer registers two scheduled tasks:
 
-To manage the task:
+| Task | Trigger | Script |
+| --- | --- | --- |
+| `ForensicWatcher` | At system startup | `watcher.ps1` |
+| `ForensicWeeklyMaintenance` | Every Sunday at 02:00 | `weekly_maintenance.ps1` |
 
 ```powershell
-# Check status
+# Check watcher status
 Get-ScheduledTask -TaskName "ForensicWatcher"
 
-# Stop watcher
-Stop-ScheduledTask -TaskName "ForensicWatcher"
-
-# Start watcher
+# Stop / start watcher
+Stop-ScheduledTask  -TaskName "ForensicWatcher"
 Start-ScheduledTask -TaskName "ForensicWatcher"
 
-# Remove task
-Unregister-ScheduledTask -TaskName "ForensicWatcher" -Confirm:$false
+# Run weekly maintenance immediately (without waiting for Sunday)
+Start-ScheduledTask -TaskName "ForensicWeeklyMaintenance"
+
+# Remove both tasks
+Unregister-ScheduledTask -TaskName "ForensicWatcher"            -Confirm:$false
+Unregister-ScheduledTask -TaskName "ForensicWeeklyMaintenance"  -Confirm:$false
 ```
 
 ---
 
-## 14. GPG Signing Setup
+## 15. GPG Signing Setup
 
 For Git commit signing to work, install GPG and set your key ID in `config.json`:
 
@@ -358,7 +396,7 @@ Without GPG signing, Git commits are still created but the identity verification
 
 ---
 
-## 15. Limitations
+## 16. Limitations
 
 - **Not tamper-proof**: The system detects tampering; it does not prevent it.
 - **Not a substitute for backup**: The chain log records file state, not file content.
@@ -367,7 +405,7 @@ Without GPG signing, Git commits are still created but the identity verification
 
 ---
 
-## 16. Common Issues
+## 17. Common Issues
 
 | Symptom                               | Likely Cause                                    | Fix                                                        |
 | ------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------- |
@@ -382,6 +420,6 @@ Without GPG signing, Git commits are still created but the identity verification
 
 ---
 
-## 17. Disclaimer
+## 18. Disclaimer
 
 This system provides **tamper-evidence**, not absolute proof of origin. Use as part of a broader forensic or legal process. See `DISCLAIMER.md`.

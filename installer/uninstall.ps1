@@ -48,6 +48,7 @@ if (-not (Test-Path $sourceConfig)) {
 $config      = Get-Content $sourceConfig -Raw | ConvertFrom-Json
 $InstallPath = $config.installPath
 $TaskName    = "ForensicWatcher"
+$WeeklyTaskName = "ForensicWeeklyMaintenance"
 
 if (-not $InstallPath) {
     throw "Config error: 'installPath' is not set in config.json"
@@ -135,6 +136,25 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     }
 } else {
     Write-Warn "Scheduled task '$TaskName' not found — skipping."
+}
+
+# ── Step 2b: Remove weekly maintenance task ─────────────────────────────────
+
+Write-Status "Removing scheduled task '$WeeklyTaskName'..."
+
+$weeklyTask = Get-ScheduledTask -TaskName $WeeklyTaskName -ErrorAction SilentlyContinue
+if ($weeklyTask) {
+    if ($weeklyTask.State -eq "Running") {
+        Stop-ScheduledTask -TaskName $WeeklyTaskName -ErrorAction SilentlyContinue
+    }
+    try {
+        Unregister-ScheduledTask -TaskName $WeeklyTaskName -Confirm:$false
+        Write-Done "Scheduled task removed."
+    } catch {
+        Write-Fail "Failed to remove scheduled task: $_"
+    }
+} else {
+    Write-Warn "Scheduled task '$WeeklyTaskName' not found — skipping."
 }
 
 # ── Step 3: Remove installed files ──────────────────────────────────────────

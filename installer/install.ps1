@@ -53,18 +53,18 @@ Register-ScheduledTask `
     -RunLevel Highest `
     -Force
 
-# Scheduled task: monthly maintenance (1st of each month at 02:00)
+# Scheduled task: weekly maintenance (every Sunday at 02:00)
 $maintenanceAction = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
-    -Argument "-ExecutionPolicy Bypass -File `"$InstallPath\src\monthly_maintenance.ps1`"" `
+    -Argument "-ExecutionPolicy Bypass -File `"$InstallPath\src\weekly_maintenance.ps1`"" `
     -WorkingDirectory $InstallPath
 
-$monthlyTrigger = New-ScheduledTaskTrigger -Monthly -DaysOfMonth 1 -At "02:00"
+$weeklyTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At "02:00"
 
 Register-ScheduledTask `
-    -TaskName "ForensicMonthlyMaintenance" `
+    -TaskName "ForensicWeeklyMaintenance" `
     -Action $maintenanceAction `
-    -Trigger $monthlyTrigger `
+    -Trigger $weeklyTrigger `
     -RunLevel Highest `
     -Force
 

@@ -100,12 +100,17 @@ if ($FilePath) {
         }
     }
 
-    # Find files whose most recent chain entry is a deletion record
+    # Find files whose most recent chain entry is a deletion record.
+    # Key by FullPath when available; fall back to FileName for old entries.
+    $lastByKey = @{}
+    foreach ($entry in $allEntries) {
+        $key = if ($entry.FullPath) { $entry.FullPath } else { $entry.FileName }
+        $lastByKey[$key] = $entry
+    }
     $deletedFiles = [ordered]@{}
-    $allEntries | Group-Object FileName | ForEach-Object {
-        $lastEntry = $_.Group[-1]
-        if ($lastEntry.FileHash -like "DELETED:*") {
-            $deletedFiles[$_.Name] = $lastEntry
+    foreach ($key in $lastByKey.Keys) {
+        if ($lastByKey[$key].FileHash -like "DELETED:*") {
+            $deletedFiles[$key] = $lastByKey[$key]
         }
     }
 

@@ -81,7 +81,10 @@ foreach ($stateKey in $trackedFiles.Keys) {
     $fullPath = $stateKey.Replace("/", "\")
     if (-not (Test-Path $fullPath)) {
         $fileName   = [System.IO.Path]::GetFileName($fullPath)
-        $fileEntries = @($allEntries | Where-Object { $_.FileName -eq $fileName })
+        $fileEntries = @($allEntries | Where-Object {
+            ($_.FullPath -and $_.FullPath -eq $fullPath) -or
+            (-not $_.FullPath -and $_.FileName -eq $fileName)
+        })
         $lastEntry   = if ($fileEntries.Count -gt 0) { $fileEntries[-1] } else { $null }
 
         # Skip if the chain log recorded a deletion - those appear in the deleted section
