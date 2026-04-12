@@ -95,7 +95,7 @@ function Add-ChainEntry($fileName, $fileHash, [switch]$SkipCommit) {
     Write-LogEntry "EVENT" "Recorded: $fileName (Hash: $($fileHash.Substring(0, 12))...)"
 
     if (-not $SkipCommit) {
-        Save-ChainState "[forensic] $fileName at $(Get-Timestamp)"
+        Save-ChainState "[autocommit - desktop_pc_shyam] $fileName at $(Get-Timestamp)"
         New-Timestamp $script:chainHash
     }
 }
@@ -204,7 +204,7 @@ function Start-DirectoryScan($watchPaths) {
 
     # One batched commit + OTS stamp for the entire scan
     if ($changedCount -gt 0) {
-        Save-ChainState "[forensic] batch scan: $changedCount file(s) at $(Get-Timestamp)"
+        Save-ChainState "[autocommit - desktop_pc_shyam] batch scan: $changedCount file(s) at $(Get-Timestamp)"
         New-Timestamp $script:chainHash
         Write-LogEntry "INFO" "Batch scan committed $changedCount file(s)"
     }
