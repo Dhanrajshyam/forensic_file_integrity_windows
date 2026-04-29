@@ -5,7 +5,8 @@ $config  = Import-Config
 $ts      = Get-Date -Format "yyyyMMddHHmmss"
 $output  = "$script:ProjectRoot/data/audit_report_$ts.txt"
 
-$allEntries = @(Import-Csv $logFile)
+$allEntries = $null
+Invoke-ChainLogLock { $script:allEntries = @(Import-Csv $logFile) }
 
 $report = @()
 $report += "FORENSIC FILE AUDIT REPORT"

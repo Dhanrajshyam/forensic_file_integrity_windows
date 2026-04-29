@@ -41,7 +41,8 @@ This will:
 - Copy scripts to `installPath` (e.g. `E:\ForensicSystem\`)
 - Create `data\` and `logs\` directories
 - Initialize a Git evidence repo at the configured `repoPath`
-- Register a scheduled task (`ForensicWatcher`) that runs the watcher at system startup
+- Register `ForensicWatcher` — runs `watcher.ps1` at system startup as `SYSTEM` (no login required)
+- Register `ForensicWeeklyMaintenance` — runs `weekly_maintenance.ps1` every Sunday at 02:00 as `SYSTEM`
 
 ### 3.2 Manual / portable install
 
@@ -352,14 +353,19 @@ Each `ChainHash` depends on the previous row's `ChainHash`, so any edit to any p
 
 The installer registers two scheduled tasks:
 
-| Task | Trigger | Script |
-| --- | --- | --- |
-| `ForensicWatcher` | At system startup | `watcher.ps1` |
-| `ForensicWeeklyMaintenance` | Every Sunday at 02:00 | `weekly_maintenance.ps1` |
+| Task | Trigger | Script | Principal | Execution limit |
+| --- | --- | --- | --- | --- |
+| `ForensicWatcher` | At system startup | `watcher.ps1` | `SYSTEM` | None (daemon) |
+| `ForensicWeeklyMaintenance` | Every Sunday at 02:00 | `weekly_maintenance.ps1` | `SYSTEM` | 2 hours |
+
+Both tasks run as the `SYSTEM` account (`LogonType = ServiceAccount`) so they start automatically on boot without requiring any user to be logged in. `StartWhenAvailable` is enabled — if a scheduled trigger is missed (e.g. the machine was off at 02:00 Sunday), the task runs as soon as the machine is next available.
+
+`ForensicWatcher` has no execution time limit because it is a long-running daemon. The default Windows limit of 72 hours would kill it mid-week without this setting.
 
 ```powershell
-# Check watcher status
+# Check status of both tasks
 Get-ScheduledTask -TaskName "ForensicWatcher"
+Get-ScheduledTask -TaskName "ForensicWeeklyMaintenance"
 
 # Stop / start watcher
 Stop-ScheduledTask  -TaskName "ForensicWatcher"
@@ -367,6 +373,10 @@ Start-ScheduledTask -TaskName "ForensicWatcher"
 
 # Run weekly maintenance immediately (without waiting for Sunday)
 Start-ScheduledTask -TaskName "ForensicWeeklyMaintenance"
+
+# Disable / re-enable a task without removing it
+Disable-ScheduledTask -TaskName "ForensicWatcher"
+Enable-ScheduledTask  -TaskName "ForensicWatcher"
 
 # Remove both tasks
 Unregister-ScheduledTask -TaskName "ForensicWatcher"            -Confirm:$false
@@ -411,6 +421,8 @@ Without GPG signing, Git commits are still created but the identity verification
 | ------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------- |
 | `Config error: watchPaths is empty`   | Config not edited before running                | Set at least one path in `config.json`                     |
 | `Config error: installPath not set`   | `installPath` missing from config               | Add `"installPath": "E:\\ForensicSystem"` to `config.json` |
+| Task is `Ready` but won't auto-start  | Old install lacks `SYSTEM` principal            | Re-run `install.ps1` as Administrator                      |
+| Watcher task stops after ~3 days      | Execution time limit of 72 hours (old)          | Re-run `install.ps1` as Administrator                      |
 | `Chain INVALID` on first run          | `chain_log.csv` was manually edited             | Delete the file; watcher will recreate it                  |
 | No `.ots` file generated              | `enableOpenTimestamps` false or no internet     | Set to `true` and ensure internet access                   |
 | Git commit errors in log              | GPG key not found or no Git repo initialised    | Check `gpgKeyId` in config or run `install.ps1` first      |

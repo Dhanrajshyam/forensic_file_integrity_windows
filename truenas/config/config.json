@@ -1,0 +1,24 @@
+{
+    "watchPaths": ["/data/recordings"],
+    "repoPath": "/data/store/repo",
+    "gitRemoteUrl": "https://github.com/Dhanrajshyam/dataHashRepo.git",
+    "systemName": "truenas_camera_server",
+    "chainLogPath": "/data/store/chain_log.csv",
+    "statePath": "/data/store/state.json",
+    "logPath": "/data/store/system_log.jsonl",
+    "gpgKeyId": "",
+    "gitRemote": "origin",
+    "gitBranch": "truenas_camera_server",
+    "enableOpenTimestamps": true,
+    "logLevel": "INFO",
+    "verifyIntervalSeconds": 300,
+    "excludePatterns": [
+        "*.tmp",
+        "~$*",
+        "*.part",
+        "*.crdownload",
+        "*.~*",
+        ".DS_Store",
+        "thumbs.db"
+    ]
+}

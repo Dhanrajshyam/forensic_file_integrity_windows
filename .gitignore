@@ -36,6 +36,9 @@ Desktop.ini
 *.user
 .vs/
 .claude/
+.mypy_cache
+.pytest_cache
+*\__pycache__
 
 # -----------------------------------------------
 # PowerShell / development

@@ -1,0 +1,47 @@
+services:
+  forensic-watcher:
+    build: .
+    image: forensic-file-integrity-truenas:latest
+    container_name: forensic-watcher
+    restart: unless-stopped
+
+    volumes:
+      # Camera recordings — read-only; watcher never modifies sources
+      - /mnt/Camera_Recordings/MiCamera:/data/recordings:ro
+      # Persistent store: chain log, state.json, Git repo, OTS proofs,
+      # and GPG keyring (GNUPGHOME=/data/store/gnupg in the image)
+      - /mnt/Camera_Recordings/integrity:/data/store:rw
+
+    environment:
+      CONFIG_PATH: /app/config/config.json
+      # Your GitHub personal access token (classic, repo scope).
+      # Used for push only; stored in a per-repo credential file (600
+      # perms) by ensure_repo — never appears in command args or logs.
+      GITHUB_TOKEN: ""
+      # Git commit identity written into the repo-local config on every
+      # startup by ensure_repo (survives container recreation).
+      GIT_USER_NAME: "TrueNAS Watcher"
+      GIT_USER_EMAIL: "watcher@truenas.local"
+
+    # Resource limits — the watcher is I/O-bound and mostly sleeps.
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "256M"
+        reservations:
+          cpus: "0.05"
+          memory: "64M"
+
+    # Raise the inotify watch limit for large recording directories.
+    # Requires Docker ≥ 20.10 or privileged mode on older versions.
+    sysctls:
+      fs.inotify.max_user_watches: 524288
+
+    # Cap Docker log size to prevent disk exhaustion on a long-running
+    # watcher that prints an event line per recorded file.
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"

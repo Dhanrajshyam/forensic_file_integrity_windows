@@ -85,8 +85,8 @@ Write-Host ""
 
 if (-not $Force) {
     Write-Host "This will:"
-    Write-Host "  1. Stop the ForensicWatcher scheduled task"
-    Write-Host "  2. Remove the scheduled task registration"
+    Write-Host "  1. Stop and remove the ForensicWatcher scheduled task"
+    Write-Host "  2. Stop and remove the ForensicWeeklyMaintenance scheduled task"
     if ($PreserveData) {
         Write-Host "  3. Remove program files from $InstallPath"
         Write-Host "     (Evidence data in data\ and logs\ will be PRESERVED)"
@@ -102,7 +102,7 @@ if (-not $Force) {
     Write-Host ""
 }
 
-# ── Step 1: Stop the scheduled task ─────────────────────────────────────────
+# ── Step 1: Stop and remove ForensicWatcher ─────────────────────────────────
 
 Write-Status "Stopping scheduled task '$TaskName'..."
 
@@ -122,8 +122,6 @@ if ($task) {
     Write-Warn "Scheduled task '$TaskName' not found — skipping."
 }
 
-# ── Step 2: Unregister the scheduled task ───────────────────────────────────
-
 Write-Status "Removing scheduled task '$TaskName'..."
 
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
@@ -138,15 +136,29 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
     Write-Warn "Scheduled task '$TaskName' not found — skipping."
 }
 
-# ── Step 2b: Remove weekly maintenance task ─────────────────────────────────
+# ── Step 2: Stop and remove ForensicWeeklyMaintenance ───────────────────────
 
-Write-Status "Removing scheduled task '$WeeklyTaskName'..."
+Write-Status "Stopping scheduled task '$WeeklyTaskName'..."
 
 $weeklyTask = Get-ScheduledTask -TaskName $WeeklyTaskName -ErrorAction SilentlyContinue
 if ($weeklyTask) {
     if ($weeklyTask.State -eq "Running") {
-        Stop-ScheduledTask -TaskName $WeeklyTaskName -ErrorAction SilentlyContinue
+        try {
+            Stop-ScheduledTask -TaskName $WeeklyTaskName
+            Write-Done "Task stopped."
+        } catch {
+            Write-Warn "Could not stop task: $_"
+        }
+    } else {
+        Write-Status "Task is not currently running (state: $($weeklyTask.State))."
     }
+} else {
+    Write-Warn "Scheduled task '$WeeklyTaskName' not found — skipping."
+}
+
+Write-Status "Removing scheduled task '$WeeklyTaskName'..."
+
+if (Get-ScheduledTask -TaskName $WeeklyTaskName -ErrorAction SilentlyContinue) {
     try {
         Unregister-ScheduledTask -TaskName $WeeklyTaskName -Confirm:$false
         Write-Done "Scheduled task removed."
@@ -210,7 +222,7 @@ if (-not (Test-Path $InstallPath)) {
     }
 }
 
-# ── Step 4: Remove Git repo (optional) ──────────────────────────────────────
+# ── Step 4: Remove Git evidence repo (optional) ─────────────────────────────
 # $config was read at the top before any deletions, so repoPath is always available.
 
 if ($config.repoPath -and (Test-Path "$($config.repoPath)\.git")) {

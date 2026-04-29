@@ -41,6 +41,9 @@ function Test-Config($config) {
     if (-not $config.repoPath) {
         Write-Warning "Config: 'repoPath' not set, Git integration disabled"
     }
+    if ($config.repoPath -and -not $config.gitBranch) {
+        Write-Warning "Config: 'gitBranch' not set — push will default to current HEAD branch"
+    }
     if (-not $config.systemName) {
         throw "Config error: 'systemName' is required (e.g. 'desktop', 'android', 'truenas')"
     }

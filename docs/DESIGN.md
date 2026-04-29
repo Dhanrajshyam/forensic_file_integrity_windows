@@ -133,8 +133,8 @@ No single component is trusted completely.
 Stored in: `chain_log.csv`
 
 ```text
-FileName,FileHash,Timestamp,ChainHash
-video1.mp4,ABC123...,2026-04-05T10:00:00+05:30,XYZ789...
+FileName,FullPath,FileHash,Timestamp,ChainHash
+video1.mp4,"E:\Recordings\video1.mp4",ABC123...,2026-04-05T10:00:00+05:30,XYZ789...
 ```
 
 ---
