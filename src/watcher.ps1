@@ -22,7 +22,11 @@ $lastEventTime = @{}
 $debounceSec = 2
 
 function Save-State {
-    $fileState | ConvertTo-Json | Out-File $stateFile
+    # Write to a temp file then rename so a mid-write crash never corrupts
+    # state.json (Move-Item -Force is atomic on the same NTFS volume).
+    $tmp = "$stateFile.tmp"
+    $fileState | ConvertTo-Json | Out-File $tmp
+    Move-Item $tmp $stateFile -Force
 }
 
 function Get-LastChainHash {
@@ -63,12 +67,47 @@ function Invoke-ChainLogRotation {
     }
 }
 
+function Initialize-GitRepo {
+    if (-not $config.repoPath -or -not (Test-Path "$($config.repoPath)/.git")) {
+        return
+    }
+
+    # Write identity into the repo-local config so it applies for ALL users
+    # (including SYSTEM) who run git in this repo — no global config needed.
+    git -C "$($config.repoPath)" config user.name  "Forensic Watcher" 2>&1 | Out-Null
+    git -C "$($config.repoPath)" config user.email "forensic@local"    2>&1 | Out-Null
+
+    if ($config.gpgKeyId) {
+        git -C "$($config.repoPath)" config user.signingkey   $config.gpgKeyId 2>&1 | Out-Null
+        git -C "$($config.repoPath)" config commit.gpgsign    true             2>&1 | Out-Null
+    }
+
+    # Ensure the local branch matches gitBranch in config.
+    # -B creates the branch if absent or resets it if already there.
+    if ($config.gitBranch) {
+        $currentBranch = git -C "$($config.repoPath)" rev-parse --abbrev-ref HEAD 2>&1
+        if ($currentBranch -ne $config.gitBranch) {
+            git -C "$($config.repoPath)" checkout -B $config.gitBranch 2>&1 | Out-Null
+            Write-LogEntry "INFO" "Switched git branch to $($config.gitBranch)"
+        }
+    }
+}
+
 function Save-ChainState($message) {
     if (-not $config.repoPath -or -not (Test-Path "$($config.repoPath)/.git")) {
         return
     }
-    # GPG: use configured key ID when set, otherwise use GPG default key
-    $gpgArg = if ($config.gpgKeyId) { "--gpg-sign=$($config.gpgKeyId)" } else { "--gpg-sign" }
+    # Test GPG key reachability — SYSTEM account may not have access to the
+    # user's keyring. Fall back to an unsigned commit rather than failing silently.
+    $gpgOk = $false
+    if ($config.gpgKeyId) {
+        gpg --list-secret-keys $config.gpgKeyId 2>&1 | Out-Null
+        $gpgOk = ($LASTEXITCODE -eq 0)
+    }
+    if ($config.gpgKeyId -and -not $gpgOk) {
+        Write-LogEntry "WARNING" "GPG key $($config.gpgKeyId) not accessible — committing without signature"
+    }
+    $gpgArg = if ($gpgOk) { "--gpg-sign=$($config.gpgKeyId)" } else { "" }
 
     # Each system writes into its own named subfolder inside the shared repo.
     # This allows desktop, android, truenas etc. to share one repo without
@@ -91,9 +130,19 @@ function Save-ChainState($message) {
             git -C "$($config.repoPath)" add "$rel/latest_hash.txt.ots" 2>&1 | Out-Null
         }
 
-        git -C "$($config.repoPath)" commit -m "$message" $gpgArg 2>&1 | Out-Null
-        # --set-upstream handles both the first push and all subsequent ones
-        git -C "$($config.repoPath)" push --set-upstream origin HEAD 2>&1 | Out-Null
+        $commitArgs = @("commit", "-m", $message)
+        if ($gpgArg) { $commitArgs += $gpgArg }
+        git -C "$($config.repoPath)" @commitArgs 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-LogEntry "WARNING" "Git commit failed (exit $LASTEXITCODE)"
+        }
+
+        # Push to the configured branch; fall back to HEAD if gitBranch not set.
+        $branch = if ($config.gitBranch) { $config.gitBranch } else { "HEAD" }
+        git -C "$($config.repoPath)" push --set-upstream origin $branch 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-LogEntry "WARNING" "Git push failed (exit $LASTEXITCODE) — will retry next cycle"
+        }
     } catch {
         Write-LogEntry "WARNING" "Git commit/push failed: $_"
     }
@@ -126,7 +175,7 @@ function Add-ChainEntry($fileName, $fullPath, $fileHash, [switch]$SkipCommit) {
     Write-LogEntry "EVENT" "Recorded: $fileName (Hash: $($fileHash.Substring(0, 12))...)"
 
     if (-not $SkipCommit) {
-        Save-ChainState "[autocommit - desktop_pc_shyam] $fileName at $(Get-Timestamp)"
+        Save-ChainState "[autocommit - $($config.systemName)] $fileName at $(Get-Timestamp)"
         New-Timestamp $script:chainHash
     }
 }
@@ -235,7 +284,7 @@ function Start-DirectoryScan($watchPaths) {
 
     # One batched commit + OTS stamp for the entire scan
     if ($changedCount -gt 0) {
-        Save-ChainState "[autocommit - desktop_pc_shyam] batch scan: $changedCount file(s) at $(Get-Timestamp)"
+        Save-ChainState "[autocommit - $($config.systemName)] batch scan: $changedCount file(s) at $(Get-Timestamp)"
         New-Timestamp $script:chainHash
         Write-LogEntry "INFO" "Batch scan committed $changedCount file(s)"
     }
@@ -253,6 +302,9 @@ Write-Host "Watch paths: $($watchPaths -join ', ')"
 Write-Host "Verify interval: ${verifyInterval}s"
 
 Write-LogEntry "INFO" "Watcher started. Monitoring: $($watchPaths -join ', ')"
+
+# Ensure git repo has local identity + correct branch (works for any OS user)
+Initialize-GitRepo
 
 # Check for month rollover and rotate log before first scan
 Invoke-ChainLogRotation
